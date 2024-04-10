@@ -1,0 +1,133 @@
+/*
+ * main.c
+ *
+ * Created: 4/7/2024 10:53:35 AM
+ *  Author: Adrián Pascual
+ */ 
+
+#define F_CPU 16000000
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+
+volatile uint8_t contador = 0;	// Contador de 8 bits																						A          b			c			d		    E			  F
+uint8_t tabla_7seg[] = {0b00111111, 0b00000110 , 0b01011011, 0b01001111, 0b01100110, 0b01101101, 0b01111101, 0b00000111, 0b01111111, 0b01100111, 0b01110111, 0b01111100, 0b00111001, 0b01011110, 0b01111001, 0b01110001};
+
+volatile uint8_t display_1;
+volatile uint8_t display_2;
+volatile uint8_t alarma = 0;
+
+void initButtons(void);
+void initADC(void);
+
+int main(void){
+	initButtons();	// Inicializar
+	initADC();
+	
+    while(1)
+    {
+		if (ADCH > contador) {
+			
+			alarma = 0b000010000;	// Setear bit para encender alarma (PC4)
+			
+		}
+		else{
+			
+			alarma = 0;		// Apagar el bit de la alarma (PC4)
+			
+			}
+		
+		// Hacer la operación OR para encender o apagar la alarma al mismo tiempo que se muestran los valores de contador y displays	
+		PORTC = (0b00000001 | alarma);	// OR
+        // Mostrar el valor del contador en el puerto D
+		PORTD = contador;
+		_delay_ms(2);
+		PORTC = (0b00000010 | alarma); // OR
+		PORTD = tabla_7seg[display_1]; // Posicionarse en la tabla el valor que tenga display_1 (0 - 15) 
+		_delay_ms(2);
+		PORTC = (0b00000100 | alarma); // OR
+		PORTD = tabla_7seg[display_2]; // Posicionarse en la tabla el valor que tenga display_2 (0 - 15)
+		_delay_ms(2);
+		
+		ADCSRA |= (1 << ADSC); // Iniciar la secuencia del ADC
+		 
+    }
+}
+
+void initButtons(void){
+	
+	cli();
+	DDRD = 0xFF; // Habilitar com salidas
+	UCSR0B = 0;
+	
+	PORTD = 0;	// Limpiar el puerto D
+	
+	DDRC = 0b00010111; // Habilitar pines 0, 1, 2 y 4 como salida y PINC3 -> ADC3 (Entrada)
+	PORTC = 0;	// Limpiar el puerto C
+	
+	DDRB = 0xFF; // Habilitar puerto B como salida
+	PORTB = 0; // Limpiar el puerto B
+	
+	// Configurar los pines de entrada
+	DDRB &= ~((1 << PORTB0) | (1 << PORTB1)); // PB0 como entrada
+	PCICR |= (1 << PCIE0); // Habilitar interrupciones para el puerto B
+	PCMSK0 |= (1 << PCINT0) | (1<<PCINT1); // Habilitar las interrupciones externas para PB0 y PB1
+	sei();
+}
+
+void initADC(void){
+	// Escoger canal 
+	ADMUX |= (1 << MUX1) | (1 << MUX0);
+	// Referencia AVCC = 5V
+	ADMUX |= (1 << REFS0);
+	ADMUX &= ~(1 << REFS1);
+	
+	// Justificación a la izquierda
+	ADMUX |= (1 << ADLAR);
+	
+	ADCSRA = 0;
+	// Habilitar la interrupción del ADC
+	ADCSRA |= (1 << ADIE);
+	
+	// Habilitar prescaler de 128, F_ADC = 125kHz
+	ADCSRA |= (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+	
+	// Habilitando el ADC
+	ADCSRA |= (1 << ADEN);
+	
+}
+
+ISR(PCINT0_vect){
+		_delay_ms(10);
+	if (!(PINB & (1 << PB1))) {
+	// Incrementar al presionar el botón en PB0
+	if (contador < 255) {
+		contador++;
+		}
+	else {
+		contador = 0; // Asignar el valor para overflow
+		}
+	}
+	if (!(PINB & (1 << PB0))) {
+		// Decrementar al presionar el botón en PC5
+		if (contador > 0) {
+			contador--;
+		}
+		else {
+			contador = 255; // Asignar el valor para underflow
+		}
+	}
+		
+}
+
+ISR(ADC_vect){
+
+	// Operaciones para mostrar los valores en los displays
+	display_1 = ADCH & 0b00001111;	// 4 bits menos significativos
+	display_2 = (ADCH >> 4);	// 4 bits más significativos
+		
+	// Apagar la bandera	
+	ADCSRA |= (1 << ADIF);
+	
+}
